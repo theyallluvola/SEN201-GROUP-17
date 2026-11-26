@@ -18,8 +18,8 @@ public class MaintenanceSchedule
     public Guid VehicleId { get; set; }
     public DateOnly DueDate { get; set; }
     public int DueOdometerKm { get; set; }
-    public ScheduleStatus Status { get; private set; }
-    public DateOnly? CompletedOn { get; private set; }
+    [JsonInclude] public ScheduleStatus Status { get; private set; }
+    [JsonInclude] public DateOnly? CompletedOn { get; private set; }
 
     public MaintenanceSchedule()
     {

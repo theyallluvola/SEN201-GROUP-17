@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using AutoLedgerSimple.Data;
 using AutoLedgerSimple.Models;
 
 namespace AutoLedgerSimple.Data;
@@ -33,13 +32,28 @@ public class JsonFleetStore : IFleetStore
         if (string.IsNullOrWhiteSpace(json))
             return new FleetDatabase();
 
-        return JsonSerializer.Deserialize<FleetDatabase>(json, Options) ?? new FleetDatabase();
+        var db = JsonSerializer.Deserialize<FleetDatabase>(json, Options) ?? new FleetDatabase();
+        foreach (var record in db.ServiceRecords)
+        {
+            record.RecalculateCosts();
+        }
+
+        return db;
     }
 
     public void Save(FleetDatabase database)
     {
         ArgumentNullException.ThrowIfNull(database);
+
+        var directory = Path.GetDirectoryName(FilePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
         var json = JsonSerializer.Serialize(database, Options);
-        File.WriteAllText(FilePath, json);
+        var tempPath = FilePath + ".tmp";
+        File.WriteAllText(tempPath, json);
+        File.Move(tempPath, FilePath, overwrite: true);
     }
 }

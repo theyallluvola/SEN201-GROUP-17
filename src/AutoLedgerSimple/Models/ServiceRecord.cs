@@ -27,10 +27,10 @@ public class ServiceRecord
     public decimal LaborCost { get; set; }
     public decimal DiscountPercent { get; set; }
     public bool ApplyVat { get; set; }
-    public decimal TotalCost { get; private set; }
-    public decimal VatAmount { get; private set; }
-    public decimal DiscountAmount { get; private set; }
-    public decimal SubTotal { get; private set; }
+    [JsonInclude] public decimal TotalCost { get; private set; }
+    [JsonInclude] public decimal VatAmount { get; private set; }
+    [JsonInclude] public decimal DiscountAmount { get; private set; }
+    [JsonInclude] public decimal SubTotal { get; private set; }
 
     public ServiceRecord()
     {
