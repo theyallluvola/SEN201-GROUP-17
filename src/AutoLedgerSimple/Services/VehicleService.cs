@@ -43,14 +43,24 @@ public class VehicleService
             ownerName,
             registrationDate);
 
-        _database.Vehicles.Add(vehicle);
+        if ((long)registrationDate.DayNumber + vehicle.DefaultIntervalDays > DateOnly.MaxValue.DayNumber)
+            throw new ArgumentOutOfRangeException(
+                nameof(registeredOn),
+                "Registration date plus default service interval exceeds the maximum supported date.");
+
+        long dueOdometer = (long)vehicle.CurrentOdometerKm + vehicle.DefaultIntervalKm;
+        if (dueOdometer > int.MaxValue)
+            throw new ArgumentOutOfRangeException(
+                nameof(currentOdometerKm),
+                "Current odometer plus default service interval exceeds the maximum supported mileage.");
 
         var initialSchedule = new MaintenanceSchedule(
             Guid.NewGuid(),
             vehicle.Id,
             registrationDate.AddDays(vehicle.DefaultIntervalDays),
-            vehicle.CurrentOdometerKm + vehicle.DefaultIntervalKm);
+            (int)dueOdometer);
 
+        _database.Vehicles.Add(vehicle);
         _database.Schedules.Add(initialSchedule);
         return vehicle;
     }

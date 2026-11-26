@@ -62,6 +62,38 @@ public class MaintenanceService
         if (customNextIntervalKm.HasValue && customNextIntervalKm.Value <= 0)
             throw new ArgumentException("Custom next interval km must be positive.", nameof(customNextIntervalKm));
 
+        DateOnly? latestExistingServiceDate = _database.ServiceRecords
+            .Where(r => r.VehicleId == vehicle.Id)
+            .Select(r => (DateOnly?)r.ServiceDate)
+            .Max();
+
+        bool isHistoricalEntry = latestExistingServiceDate.HasValue
+            && serviceDate < latestExistingServiceDate.Value;
+
+        MaintenanceSchedule? nextSchedule = null;
+        if (!isHistoricalEntry)
+        {
+            int nextDays = customNextIntervalDays ?? vehicle.DefaultIntervalDays;
+            int nextKm = customNextIntervalKm ?? vehicle.DefaultIntervalKm;
+
+            if ((long)serviceDate.DayNumber + nextDays > DateOnly.MaxValue.DayNumber)
+                throw new ArgumentOutOfRangeException(
+                    nameof(customNextIntervalDays),
+                    "Next service due date exceeds the maximum supported date.");
+
+            long nextDueOdometer = (long)odometerAtServiceKm + nextKm;
+            if (nextDueOdometer > int.MaxValue)
+                throw new ArgumentOutOfRangeException(
+                    nameof(customNextIntervalKm),
+                    "Next service due odometer exceeds the maximum supported mileage.");
+
+            nextSchedule = new MaintenanceSchedule(
+                Guid.NewGuid(),
+                vehicle.Id,
+                serviceDate.AddDays(nextDays),
+                (int)nextDueOdometer);
+        }
+
         var record = new ServiceRecord(
             Guid.NewGuid(),
             vehicle.Id,
@@ -74,27 +106,22 @@ public class MaintenanceService
             discountPercent,
             applyVat);
 
-        _database.ServiceRecords.Add(record);
-
         if (odometerAtServiceKm > vehicle.CurrentOdometerKm)
             vehicle.UpdateOdometer(odometerAtServiceKm);
 
-        foreach (var activeSchedule in _database.Schedules
-            .Where(s => s.VehicleId == vehicle.Id && s.Status != ScheduleStatus.Completed))
+        _database.ServiceRecords.Add(record);
+
+        if (nextSchedule is not null)
         {
-            activeSchedule.MarkCompleted(serviceDate);
+            foreach (var activeSchedule in _database.Schedules
+                .Where(s => s.VehicleId == vehicle.Id && s.Status != ScheduleStatus.Completed))
+            {
+                activeSchedule.MarkCompleted(serviceDate);
+            }
+
+            _database.Schedules.Add(nextSchedule);
         }
 
-        int nextDays = customNextIntervalDays ?? vehicle.DefaultIntervalDays;
-        int nextKm = customNextIntervalKm ?? vehicle.DefaultIntervalKm;
-
-        var nextSchedule = new MaintenanceSchedule(
-            Guid.NewGuid(),
-            vehicle.Id,
-            serviceDate.AddDays(nextDays),
-            vehicle.CurrentOdometerKm + nextKm);
-
-        _database.Schedules.Add(nextSchedule);
         return record;
     }
 
