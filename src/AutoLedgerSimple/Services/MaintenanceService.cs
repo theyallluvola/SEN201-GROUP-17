@@ -65,8 +65,8 @@ public class MaintenanceService
             .Select(r => (DateOnly?)r.ServiceDate)
             .Max();
 
-        bool isHistoricalEntry = latestExistingServiceDate.HasValue
-            && serviceDate < latestExistingServiceDate.Value;
+        bool isHistoricalEntry = serviceDate < vehicle.RegisteredOn
+            || (latestExistingServiceDate.HasValue && serviceDate < latestExistingServiceDate.Value);
 
         if (isHistoricalEntry)
         {
@@ -371,17 +371,24 @@ public class MaintenanceService
 
     private int? GetRegistrationOdometerKm(Vehicle vehicle)
     {
+        if (vehicle.RegisteredOdometerKm.HasValue)
+            return vehicle.RegisteredOdometerKm.Value;
+
+        if (!_database.ServiceRecords.Any(r => r.VehicleId == vehicle.Id))
+            return vehicle.CurrentOdometerKm;
+
         if ((long)vehicle.RegisteredOn.DayNumber + vehicle.DefaultIntervalDays > DateOnly.MaxValue.DayNumber)
             return null;
 
         DateOnly initialDueDate = vehicle.RegisteredOn.AddDays(vehicle.DefaultIntervalDays);
-        var matchingInitialOdometers = _database.Schedules
-            .Where(s => s.VehicleId == vehicle.Id && s.DueDate == initialDueDate)
-            .Select(s => s.DueOdometerKm - vehicle.DefaultIntervalKm)
-            .Where(km => km >= 0)
-            .ToList();
+        var initialSchedule = _database.Schedules
+            .FirstOrDefault(s => s.VehicleId == vehicle.Id && s.DueDate == initialDueDate);
 
-        return matchingInitialOdometers.Count > 0 ? matchingInitialOdometers.Min() : null;
+        if (initialSchedule is null)
+            return null;
+
+        int derivedKm = initialSchedule.DueOdometerKm - vehicle.DefaultIntervalKm;
+        return derivedKm >= 0 ? derivedKm : null;
     }
 
     private static int GetPriorityRank(ScheduleStatus status) => status switch

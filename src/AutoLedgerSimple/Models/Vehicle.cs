@@ -15,6 +15,7 @@ public abstract class Vehicle
     [JsonInclude] public string Model { get; protected set; } = string.Empty;
     [JsonInclude] public int Year { get; protected set; }
     [JsonInclude] public int CurrentOdometerKm { get; protected set; }
+    [JsonInclude] public int? RegisteredOdometerKm { get; protected set; }
     [JsonInclude] public string OwnerName { get; protected set; } = string.Empty;
     [JsonInclude] public DateOnly RegisteredOn { get; protected set; }
 
@@ -52,6 +53,7 @@ public abstract class Vehicle
         Model = model.Trim();
         Year = year;
         CurrentOdometerKm = currentOdometerKm;
+        RegisteredOdometerKm = currentOdometerKm;
         OwnerName = ownerName.Trim();
         RegisteredOn = registeredOn;
     }
