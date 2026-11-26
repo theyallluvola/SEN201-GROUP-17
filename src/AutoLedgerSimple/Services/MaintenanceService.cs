@@ -374,9 +374,6 @@ public class MaintenanceService
         if (vehicle.RegisteredOdometerKm.HasValue)
             return vehicle.RegisteredOdometerKm.Value;
 
-        if (!_database.ServiceRecords.Any(r => r.VehicleId == vehicle.Id))
-            return vehicle.CurrentOdometerKm;
-
         if ((long)vehicle.RegisteredOn.DayNumber + vehicle.DefaultIntervalDays > DateOnly.MaxValue.DayNumber)
             return null;
 
@@ -384,11 +381,10 @@ public class MaintenanceService
         var initialSchedule = _database.Schedules
             .FirstOrDefault(s => s.VehicleId == vehicle.Id && s.DueDate == initialDueDate);
 
-        if (initialSchedule is null)
+        if (initialSchedule is null || initialSchedule.DueOdometerKm < vehicle.DefaultIntervalKm)
             return null;
 
-        int derivedKm = initialSchedule.DueOdometerKm - vehicle.DefaultIntervalKm;
-        return derivedKm >= 0 ? derivedKm : null;
+        return initialSchedule.DueOdometerKm - vehicle.DefaultIntervalKm;
     }
 
     private static int GetPriorityRank(ScheduleStatus status) => status switch
