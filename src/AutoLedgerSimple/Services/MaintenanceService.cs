@@ -70,14 +70,24 @@ public class MaintenanceService
 
         if (isHistoricalEntry)
         {
+            int? registrationOdometerKm = GetRegistrationOdometerKm(vehicle);
+
             int? earlierMaxKm = vehicleRecords
                 .Where(r => r.ServiceDate < serviceDate)
                 .Select(r => (int?)r.OdometerAtServiceKm)
                 .Max();
 
-            if (earlierMaxKm.HasValue && odometerAtServiceKm < earlierMaxKm.Value)
+            int? lowerBoundKm = earlierMaxKm;
+            if (registrationOdometerKm.HasValue && serviceDate >= vehicle.RegisteredOn)
+            {
+                lowerBoundKm = lowerBoundKm.HasValue
+                    ? Math.Max(lowerBoundKm.Value, registrationOdometerKm.Value)
+                    : registrationOdometerKm.Value;
+            }
+
+            if (lowerBoundKm.HasValue && odometerAtServiceKm < lowerBoundKm.Value)
                 throw new ArgumentException(
-                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot be lower than an earlier service reading ({earlierMaxKm.Value:N0} km).",
+                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot be lower than an earlier recorded reading ({lowerBoundKm.Value:N0} km).",
                     nameof(odometerAtServiceKm));
 
             int laterMinKm = vehicleRecords
@@ -87,9 +97,12 @@ public class MaintenanceService
                 .Min();
 
             int upperBoundKm = Math.Min(laterMinKm, vehicle.CurrentOdometerKm);
+            if (registrationOdometerKm.HasValue && serviceDate < vehicle.RegisteredOn)
+                upperBoundKm = Math.Min(upperBoundKm, registrationOdometerKm.Value);
+
             if (odometerAtServiceKm > upperBoundKm)
                 throw new ArgumentException(
-                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot exceed a later reading ({upperBoundKm:N0} km).",
+                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot exceed a later recorded reading ({upperBoundKm:N0} km).",
                     nameof(odometerAtServiceKm));
         }
         else if (odometerAtServiceKm < vehicle.CurrentOdometerKm)
@@ -354,6 +367,21 @@ public class MaintenanceService
             today: currentDay);
 
         return true;
+    }
+
+    private int? GetRegistrationOdometerKm(Vehicle vehicle)
+    {
+        if ((long)vehicle.RegisteredOn.DayNumber + vehicle.DefaultIntervalDays > DateOnly.MaxValue.DayNumber)
+            return null;
+
+        DateOnly initialDueDate = vehicle.RegisteredOn.AddDays(vehicle.DefaultIntervalDays);
+        var matchingInitialOdometers = _database.Schedules
+            .Where(s => s.VehicleId == vehicle.Id && s.DueDate == initialDueDate)
+            .Select(s => s.DueOdometerKm - vehicle.DefaultIntervalKm)
+            .Where(km => km >= 0)
+            .ToList();
+
+        return matchingInitialOdometers.Count > 0 ? matchingInitialOdometers.Min() : null;
     }
 
     private static int GetPriorityRank(ScheduleStatus status) => status switch
