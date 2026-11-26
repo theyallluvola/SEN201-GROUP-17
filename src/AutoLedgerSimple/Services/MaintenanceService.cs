@@ -42,11 +42,6 @@ public class MaintenanceService
         if (odometerAtServiceKm < 0)
             throw new ArgumentException("Odometer reading cannot be negative.", nameof(odometerAtServiceKm));
 
-        if (odometerAtServiceKm < vehicle.CurrentOdometerKm)
-            throw new ArgumentException(
-                $"Service odometer ({odometerAtServiceKm:N0} km) cannot be lower than current odometer ({vehicle.CurrentOdometerKm:N0} km).",
-                nameof(odometerAtServiceKm));
-
         if (partsCost < 0m)
             throw new ArgumentException("Parts cost cannot be negative.", nameof(partsCost));
 
@@ -62,13 +57,47 @@ public class MaintenanceService
         if (customNextIntervalKm.HasValue && customNextIntervalKm.Value <= 0)
             throw new ArgumentException("Custom next interval km must be positive.", nameof(customNextIntervalKm));
 
-        DateOnly? latestExistingServiceDate = _database.ServiceRecords
+        var vehicleRecords = _database.ServiceRecords
             .Where(r => r.VehicleId == vehicle.Id)
+            .ToList();
+
+        DateOnly? latestExistingServiceDate = vehicleRecords
             .Select(r => (DateOnly?)r.ServiceDate)
             .Max();
 
         bool isHistoricalEntry = latestExistingServiceDate.HasValue
             && serviceDate < latestExistingServiceDate.Value;
+
+        if (isHistoricalEntry)
+        {
+            int? earlierMaxKm = vehicleRecords
+                .Where(r => r.ServiceDate < serviceDate)
+                .Select(r => (int?)r.OdometerAtServiceKm)
+                .Max();
+
+            if (earlierMaxKm.HasValue && odometerAtServiceKm < earlierMaxKm.Value)
+                throw new ArgumentException(
+                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot be lower than an earlier service reading ({earlierMaxKm.Value:N0} km).",
+                    nameof(odometerAtServiceKm));
+
+            int laterMinKm = vehicleRecords
+                .Where(r => r.ServiceDate > serviceDate)
+                .Select(r => r.OdometerAtServiceKm)
+                .DefaultIfEmpty(vehicle.CurrentOdometerKm)
+                .Min();
+
+            int upperBoundKm = Math.Min(laterMinKm, vehicle.CurrentOdometerKm);
+            if (odometerAtServiceKm > upperBoundKm)
+                throw new ArgumentException(
+                    $"Historical service odometer ({odometerAtServiceKm:N0} km) cannot exceed a later reading ({upperBoundKm:N0} km).",
+                    nameof(odometerAtServiceKm));
+        }
+        else if (odometerAtServiceKm < vehicle.CurrentOdometerKm)
+        {
+            throw new ArgumentException(
+                $"Service odometer ({odometerAtServiceKm:N0} km) cannot be lower than current odometer ({vehicle.CurrentOdometerKm:N0} km).",
+                nameof(odometerAtServiceKm));
+        }
 
         MaintenanceSchedule? nextSchedule = null;
         if (!isHistoricalEntry)
@@ -106,7 +135,7 @@ public class MaintenanceService
             discountPercent,
             applyVat);
 
-        if (odometerAtServiceKm > vehicle.CurrentOdometerKm)
+        if (!isHistoricalEntry && odometerAtServiceKm > vehicle.CurrentOdometerKm)
             vehicle.UpdateOdometer(odometerAtServiceKm);
 
         _database.ServiceRecords.Add(record);
