@@ -34,6 +34,7 @@ public sealed class MainForm : Form
     private readonly FleetDatabase _database;
     private readonly VehicleService _vehicles;
     private readonly MaintenanceService _maintenance;
+    private bool _suppressOdometerPrefill;
 
     private readonly TabControl _tabs = new() { Name = "tabs", Dock = DockStyle.Fill };
     private readonly StatusStrip _statusStrip = new();
@@ -174,8 +175,10 @@ public sealed class MainForm : Form
 
         if (!TrySave())
         {
+            string enteredOdometer = _serviceOdometer.Text;
             JsonFleetStore.RestoreSnapshot(_database, snapshot);
             RefreshAll();
+            _serviceOdometer.Text = enteredOdometer;
             return false;
         }
 
@@ -245,8 +248,10 @@ public sealed class MainForm : Form
 
         if (!TrySave())
         {
+            string enteredOdometer = _serviceOdometer.Text;
             JsonFleetStore.RestoreSnapshot(_database, snapshot);
             RefreshAll();
+            _serviceOdometer.Text = enteredOdometer;
             return false;
         }
 
@@ -303,21 +308,29 @@ public sealed class MainForm : Form
     {
         Guid? previous = (_serviceVehicle.SelectedItem as VehicleChoice)?.Id;
 
-        _serviceVehicle.Items.Clear();
-        foreach (Vehicle v in _vehicles.GetAllVehicles())
-            _serviceVehicle.Items.Add(new VehicleChoice(v.Id, v.GetDisplayName()));
-
-        int selectedIndex = _serviceVehicle.Items.Count > 0 ? 0 : -1;
-        for (int i = 0; i < _serviceVehicle.Items.Count; i++)
+        _suppressOdometerPrefill = true;
+        try
         {
-            if (_serviceVehicle.Items[i] is VehicleChoice choice && choice.Id == previous)
-            {
-                selectedIndex = i;
-                break;
-            }
-        }
+            _serviceVehicle.Items.Clear();
+            foreach (Vehicle v in _vehicles.GetAllVehicles())
+                _serviceVehicle.Items.Add(new VehicleChoice(v.Id, v.GetDisplayName()));
 
-        _serviceVehicle.SelectedIndex = selectedIndex;
+            int selectedIndex = _serviceVehicle.Items.Count > 0 ? 0 : -1;
+            for (int i = 0; i < _serviceVehicle.Items.Count; i++)
+            {
+                if (_serviceVehicle.Items[i] is VehicleChoice choice && choice.Id == previous)
+                {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+
+            _serviceVehicle.SelectedIndex = selectedIndex;
+        }
+        finally
+        {
+            _suppressOdometerPrefill = false;
+        }
     }
 
     private void RefreshHistory()
@@ -563,7 +576,11 @@ public sealed class MainForm : Form
         form.SetColumnSpan(_preview, 3);
         form.Controls.Add(_recordButton, 3, 5);
 
-        _serviceVehicle.SelectedIndexChanged += (_, _) => PrefillOdometer();
+        _serviceVehicle.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_suppressOdometerPrefill)
+                PrefillOdometer();
+        };
         _parts.TextChanged += (_, _) => UpdatePreview();
         _labor.TextChanged += (_, _) => UpdatePreview();
         _discount.TextChanged += (_, _) => UpdatePreview();

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AutoLedgerSimple.Models;
@@ -47,13 +48,6 @@ public class JsonFleetStore : IFleetStore
     {
         ArgumentNullException.ThrowIfNull(database);
 
-        string? currentOnDisk = File.Exists(FilePath) ? File.ReadAllText(FilePath) : null;
-        if (!string.Equals(currentOnDisk, _lastKnownSnapshot, StringComparison.Ordinal))
-        {
-            throw new IOException(
-                "The fleet file was modified by another instance. Reload the application before saving to avoid overwriting changes.");
-        }
-
         var directory = Path.GetDirectoryName(FilePath);
         if (!string.IsNullOrEmpty(directory))
         {
@@ -61,6 +55,15 @@ public class JsonFleetStore : IFleetStore
         }
 
         var json = SerializeSnapshot(database);
+        using FileStream lockStream = AcquireFileLock();
+
+        string? currentOnDisk = File.Exists(FilePath) ? File.ReadAllText(FilePath) : null;
+        if (!string.Equals(currentOnDisk, _lastKnownSnapshot, StringComparison.Ordinal))
+        {
+            throw new IOException(
+                "The fleet file was modified by another instance. Reload the application before saving to avoid overwriting changes.");
+        }
+
         var tempPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
         try
         {
@@ -75,6 +78,30 @@ public class JsonFleetStore : IFleetStore
                 try { File.Delete(tempPath); } catch { }
             }
             throw;
+        }
+    }
+
+    private FileStream AcquireFileLock()
+    {
+        string lockPath = FilePath + ".lock";
+        var deadline = Stopwatch.StartNew();
+        const int timeoutMs = 3000;
+
+        while (true)
+        {
+            try
+            {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1);
+            }
+            catch (IOException) when (deadline.ElapsedMilliseconds < timeoutMs)
+            {
+                Thread.Sleep(15);
+            }
         }
     }
 

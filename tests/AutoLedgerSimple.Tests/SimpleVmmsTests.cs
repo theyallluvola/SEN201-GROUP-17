@@ -671,4 +671,139 @@ public class SimpleVmmsTests
             Assert.Equal(88_500, vehicles.FindByPlate("EKY-714-XT")!.CurrentOdometerKm);
         });
     }
+
+    private sealed class ToggleableSaveFleetStore : IFleetStore
+    {
+        private FleetDatabase _database;
+
+        public ToggleableSaveFleetStore(FleetDatabase database) => _database = database;
+
+        public bool ShouldFail { get; set; }
+        public int SaveCount { get; private set; }
+        public string FilePath => "memory://toggleable";
+
+        public FleetDatabase Load() => _database;
+
+        public void Save(FleetDatabase database)
+        {
+            if (ShouldFail)
+                throw new IOException("Temporary disk failure.");
+
+            _database = database;
+            SaveCount++;
+        }
+    }
+
+    [Fact]
+    public void MainForm_FailedSavePreservesEnteredOdometerAndRetrySavesExactMileage()
+    {
+        RunSta(() =>
+        {
+            var db = new FleetDatabase();
+            var vehicles = new VehicleService(db);
+            var maintenance = new MaintenanceService(db);
+            vehicles.RegisterVehicle(
+                VehicleType.Passenger, "RTY-100-AA", "Toyota", "Corolla", 2021, 1_000, "Fleet Office", Today.AddDays(-10));
+
+            var store = new ToggleableSaveFleetStore(db) { ShouldFail = true };
+            using var form = new MainForm(store, db, vehicles, maintenance);
+
+            Find<ComboBox>(form, "cboServiceVehicle").SelectedIndex = 0;
+            Find<TextBox>(form, "txtServiceOdometer").Text = "1200";
+            Find<TextBox>(form, "txtDescription").Text = "Oil top-up";
+            Find<TextBox>(form, "txtParts").Text = "5000";
+            Find<TextBox>(form, "txtLabor").Text = "2000";
+
+            Assert.False(form.TryRecordService());
+            Assert.Equal("1200", Find<TextBox>(form, "txtServiceOdometer").Text);
+            Assert.Equal(1_000, vehicles.FindByPlate("RTY-100-AA")!.CurrentOdometerKm);
+
+            store.ShouldFail = false;
+            Assert.True(form.TryRecordService());
+            Assert.Equal(1, store.SaveCount);
+            Assert.Equal(1_200, Assert.Single(db.ServiceRecords).OdometerAtServiceKm);
+            Assert.Equal(1_200, vehicles.FindByPlate("RTY-100-AA")!.CurrentOdometerKm);
+        });
+    }
+
+    [Fact]
+    public void MainForm_TwoFractionalPartsPlusDecimalMaxValueIsRejectedAndAppStaysReopenable()
+    {
+        RunSta(() =>
+        {
+            var fixture = new Fixture(seedSampleData: false);
+            Vehicle v = fixture.Vehicles.RegisterVehicle(
+                VehicleType.Passenger, "FRC-100-AA", "Toyota", "Corolla", 2021, 1_000, "Owner", Today.AddDays(-10));
+
+            fixture.Maintenance.RecordService(v.Id, Today.AddDays(-2), 1_050, ServiceCategory.RoutineOilChange, "First 0.40", 0.40m, 0m, today: Today);
+            fixture.Maintenance.RecordService(v.Id, Today.AddDays(-1), 1_100, ServiceCategory.RoutineOilChange, "Second 0.40", 0.40m, 0m, today: Today);
+
+            using MainForm form = fixture.CreateForm();
+            Find<ComboBox>(form, "cboServiceVehicle").SelectedIndex = 0;
+            Find<TextBox>(form, "txtServiceOdometer").Text = "1200";
+            Find<TextBox>(form, "txtDescription").Text = "Overflow after fractional sums";
+            Find<TextBox>(form, "txtParts").Text = decimal.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Find<TextBox>(form, "txtLabor").Text = "0";
+            Find<TextBox>(form, "txtDiscount").Text = "0";
+            Find<CheckBox>(form, "chkVat").Checked = false;
+
+            Assert.False(form.TryRecordService());
+            Assert.Contains("too large", form.StatusMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, fixture.Database.ServiceRecords.Count);
+            Assert.Equal(0, fixture.Store.SaveCount);
+
+            using MainForm reopened = fixture.CreateForm();
+            Assert.Equal("2", Find<Label>(reopened, "kpiServices").Text);
+        });
+    }
+
+    [Fact]
+    public void JsonFleetStore_SimultaneousSavesAllowOnlyOneWriterAndPreserveSavedVehicle()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "autoledger-race-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string filePath = Path.Combine(directory, "fleet.json");
+            var store1 = new JsonFleetStore(filePath);
+            var store2 = new JsonFleetStore(filePath);
+
+            var db1 = store1.Load();
+            new VehicleService(db1).RegisterVehicle(VehicleType.Passenger, "AAA-111-AA", "Toyota", "Corolla", 2021, 1_000, "Owner A", Today);
+
+            var db2 = store2.Load();
+            new VehicleService(db2).RegisterVehicle(VehicleType.Passenger, "BBB-222-BB", "Honda", "Civic", 2022, 2_000, "Owner B", Today);
+
+            using var barrier = new Barrier(2);
+            int successes = 0;
+            int conflicts = 0;
+
+            Task t1 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                try { store1.Save(db1); Interlocked.Increment(ref successes); }
+                catch (IOException) { Interlocked.Increment(ref conflicts); }
+            });
+
+            Task t2 = Task.Run(() =>
+            {
+                barrier.SignalAndWait();
+                try { store2.Save(db2); Interlocked.Increment(ref successes); }
+                catch (IOException) { Interlocked.Increment(ref conflicts); }
+            });
+
+            Task.WaitAll(t1, t2);
+
+            Assert.Equal(1, successes);
+            Assert.Equal(1, conflicts);
+
+            FleetDatabase reopened = new JsonFleetStore(filePath).Load();
+            Vehicle saved = Assert.Single(reopened.Vehicles);
+            Assert.Contains(saved.PlateNumber, new[] { "AAA-111-AA", "BBB-222-BB" });
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
 }

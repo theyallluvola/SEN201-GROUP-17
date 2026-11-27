@@ -183,8 +183,12 @@ public class MaintenanceService
     }
 
     public FleetCostSummary GetCostSummary()
+        => BuildCostSummary(_database.Vehicles, _database.ServiceRecords);
+
+    private static FleetCostSummary BuildCostSummary(
+        IReadOnlyCollection<Vehicle> vehicles,
+        IReadOnlyCollection<ServiceRecord> records)
     {
-        var records = _database.ServiceRecords;
         decimal totalParts = records.Sum(r => r.PartsCost);
         decimal totalLabor = records.Sum(r => r.LaborCost);
         decimal totalDiscount = records.Sum(r => r.DiscountAmount);
@@ -194,7 +198,7 @@ public class MaintenanceService
             ? Math.Round(totalSpend / records.Count, 2, MidpointRounding.AwayFromZero)
             : 0m;
 
-        var byVehicle = _database.Vehicles
+        var byVehicle = vehicles
             .Select(v =>
             {
                 var vRecords = records.Where(r => r.VehicleId == v.Id).ToList();
@@ -224,7 +228,7 @@ public class MaintenanceService
             .ToList();
 
         return new FleetCostSummary(
-            _database.Vehicles.Count,
+            vehicles.Count,
             records.Count,
             totalParts,
             totalLabor,
@@ -373,25 +377,13 @@ public class MaintenanceService
 
     private void ValidateFleetTotalsDoNotOverflow(ServiceRecord candidate)
     {
+        var prospectiveRecords = new List<ServiceRecord>(_database.ServiceRecords.Count + 1);
+        prospectiveRecords.AddRange(_database.ServiceRecords);
+        prospectiveRecords.Add(candidate);
+
         try
         {
-            checked
-            {
-                decimal totalParts = candidate.PartsCost;
-                decimal totalLabor = candidate.LaborCost;
-                decimal totalDiscount = candidate.DiscountAmount;
-                decimal totalVat = candidate.VatAmount;
-                decimal totalSpend = candidate.TotalCost;
-
-                foreach (ServiceRecord existing in _database.ServiceRecords)
-                {
-                    totalParts += existing.PartsCost;
-                    totalLabor += existing.LaborCost;
-                    totalDiscount += existing.DiscountAmount;
-                    totalVat += existing.VatAmount;
-                    totalSpend += existing.TotalCost;
-                }
-            }
+            _ = BuildCostSummary(_database.Vehicles, prospectiveRecords);
         }
         catch (OverflowException ex)
         {
