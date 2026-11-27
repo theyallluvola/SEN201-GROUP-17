@@ -148,6 +148,8 @@ public class MaintenanceService
             discountPercent,
             applyVat);
 
+        ValidateFleetTotalsDoNotOverflow(record);
+
         if (!isHistoricalEntry && odometerAtServiceKm > vehicle.CurrentOdometerKm)
             vehicle.UpdateOdometer(odometerAtServiceKm);
 
@@ -181,8 +183,12 @@ public class MaintenanceService
     }
 
     public FleetCostSummary GetCostSummary()
+        => BuildCostSummary(_database.Vehicles, _database.ServiceRecords);
+
+    private static FleetCostSummary BuildCostSummary(
+        IReadOnlyCollection<Vehicle> vehicles,
+        IReadOnlyCollection<ServiceRecord> records)
     {
-        var records = _database.ServiceRecords;
         decimal totalParts = records.Sum(r => r.PartsCost);
         decimal totalLabor = records.Sum(r => r.LaborCost);
         decimal totalDiscount = records.Sum(r => r.DiscountAmount);
@@ -192,7 +198,7 @@ public class MaintenanceService
             ? Math.Round(totalSpend / records.Count, 2, MidpointRounding.AwayFromZero)
             : 0m;
 
-        var byVehicle = _database.Vehicles
+        var byVehicle = vehicles
             .Select(v =>
             {
                 var vRecords = records.Where(r => r.VehicleId == v.Id).ToList();
@@ -222,7 +228,7 @@ public class MaintenanceService
             .ToList();
 
         return new FleetCostSummary(
-            _database.Vehicles.Count,
+            vehicles.Count,
             records.Count,
             totalParts,
             totalLabor,
@@ -367,6 +373,24 @@ public class MaintenanceService
             today: currentDay);
 
         return true;
+    }
+
+    private void ValidateFleetTotalsDoNotOverflow(ServiceRecord candidate)
+    {
+        var prospectiveRecords = new List<ServiceRecord>(_database.ServiceRecords.Count + 1);
+        prospectiveRecords.AddRange(_database.ServiceRecords);
+        prospectiveRecords.Add(candidate);
+
+        try
+        {
+            _ = BuildCostSummary(_database.Vehicles, prospectiveRecords);
+        }
+        catch (OverflowException ex)
+        {
+            throw new OverflowException(
+                "Recording this service would cause fleet cost totals to exceed the maximum supported amount.",
+                ex);
+        }
     }
 
     private int? GetRegistrationOdometerKm(Vehicle vehicle)
