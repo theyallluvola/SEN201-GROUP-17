@@ -758,7 +758,7 @@ public class SimpleVmmsTests
     }
 
     [Fact]
-    public void JsonFleetStore_SimultaneousSavesAllowOnlyOneWriterAndPreserveSavedVehicle()
+    public async Task JsonFleetStore_SimultaneousSavesAllowOnlyOneWriterAndPreserveSavedVehicle()
     {
         string directory = Path.Combine(Path.GetTempPath(), "autoledger-race-" + Guid.NewGuid().ToString("N"));
         try
@@ -791,7 +791,7 @@ public class SimpleVmmsTests
                 catch (IOException) { Interlocked.Increment(ref conflicts); }
             });
 
-            Task.WaitAll(t1, t2);
+            await Task.WhenAll(t1, t2);
 
             Assert.Equal(1, successes);
             Assert.Equal(1, conflicts);
