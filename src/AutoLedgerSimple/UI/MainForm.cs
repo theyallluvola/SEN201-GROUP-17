@@ -34,6 +34,7 @@ public sealed class MainForm : Form
     private readonly FleetDatabase _database;
     private readonly VehicleService _vehicles;
     private readonly MaintenanceService _maintenance;
+    private readonly Icon? _appIcon;
     private bool _suppressOdometerPrefill;
 
     private readonly TabControl _tabs = new() { Name = "tabs", Dock = DockStyle.Fill };
@@ -118,6 +119,9 @@ public sealed class MainForm : Form
         _maintenance = maintenanceService ?? throw new ArgumentNullException(nameof(maintenanceService));
 
         Text = "AutoLedger - Vehicle Maintenance Management";
+        _appIcon = LoadAppIcon();
+        if (_appIcon is not null)
+            Icon = _appIcon;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1180, 720);
         MinimumSize = new Size(1000, 640);
@@ -765,5 +769,19 @@ public sealed class MainForm : Form
         }
 
         return grid;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+            _appIcon?.Dispose();
+
+        base.Dispose(disposing);
+    }
+
+    private static Icon? LoadAppIcon()
+    {
+        using Stream? stream = typeof(MainForm).Assembly.GetManifestResourceStream("AutoLedgerSimple.Assets.autoledger.ico");
+        return stream is null ? null : new Icon(stream);
     }
 }
