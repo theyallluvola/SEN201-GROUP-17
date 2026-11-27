@@ -140,7 +140,7 @@ public sealed class MainForm : Form
     private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
 
     /// <summary>The text currently shown in the status bar.</summary>
-    public string StatusMessage => _statusLabel.Text;
+    public string StatusMessage => _statusLabel.Text ?? string.Empty;
 
     // ------------------------------------------------------------------ actions
 
@@ -227,6 +227,10 @@ public sealed class MainForm : Form
                 labor,
                 discount,
                 _applyVat.Checked);
+        }
+        catch (OverflowException)
+        {
+            return Fail("Entered costs are too large to calculate.");
         }
         catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException or InvalidOperationException)
         {
@@ -415,9 +419,18 @@ public sealed class MainForm : Form
             return;
         }
 
-        var sample = new ServiceRecord(
-            Guid.Empty, Guid.Empty, Today, 0, ServiceCategory.RoutineOilChange,
-            string.Empty, parts, labor, discount, _applyVat.Checked);
+        ServiceRecord sample;
+        try
+        {
+            sample = new ServiceRecord(
+                Guid.Empty, Guid.Empty, Today, 0, ServiceCategory.RoutineOilChange,
+                string.Empty, parts, labor, discount, _applyVat.Checked);
+        }
+        catch (OverflowException)
+        {
+            _preview.Text = "Entered amounts are too large to calculate.";
+            return;
+        }
 
         string vatLabel = _applyVat.Checked ? "VAT (7.5%)" : "VAT (not applied)";
         string discountText = discount.ToString("0.##", Inv);

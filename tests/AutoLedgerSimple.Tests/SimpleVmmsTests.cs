@@ -496,4 +496,41 @@ public class SimpleVmmsTests
             Assert.True(fixture.Store.SaveCount >= 1);
         });
     }
+
+    [Fact]
+    public void RecordService_BackdatedEntryBelowRegistrationMileageIsRejected()
+    {
+        var fixture = new Fixture(seedSampleData: false);
+        Vehicle vehicle = fixture.Vehicles.RegisterVehicle(
+            VehicleType.Passenger, "REG-100-AA", "Toyota", "Corolla", 2021, 1_000, "Fleet Office", Today.AddDays(-100));
+
+        fixture.Maintenance.RecordService(
+            vehicle.Id, Today, 1_200, ServiceCategory.RoutineOilChange,
+            "Latest service", 5_000m, 2_000m, today: Today);
+
+        Assert.Throws<ArgumentException>(() => fixture.Maintenance.RecordService(
+            vehicle.Id, Today.AddDays(-6), 500, ServiceCategory.TireRotation,
+            "Below registration mileage", 1_000m, 1_000m, today: Today));
+    }
+
+    [Fact]
+    public void MainForm_OverflowingCostsDoNotCrashPreviewOrRecordService()
+    {
+        RunSta(() =>
+        {
+            var fixture = new Fixture(seedSampleData: true);
+            using MainForm form = fixture.CreateForm();
+
+            Find<ComboBox>(form, "cboServiceVehicle").SelectedIndex = 0;
+            Find<TextBox>(form, "txtServiceOdometer").Text = "89,000";
+            Find<TextBox>(form, "txtDescription").Text = "Overflow check";
+            Find<TextBox>(form, "txtParts").Text = decimal.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Find<TextBox>(form, "txtLabor").Text = "100";
+
+            Assert.Contains("too large", Find<Label>(form, "lblPreview").Text, StringComparison.OrdinalIgnoreCase);
+            Assert.False(form.TryRecordService());
+            Assert.Contains("too large", form.StatusMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, fixture.Store.SaveCount);
+        });
+    }
 }
