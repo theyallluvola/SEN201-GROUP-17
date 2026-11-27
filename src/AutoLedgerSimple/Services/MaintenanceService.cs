@@ -148,6 +148,8 @@ public class MaintenanceService
             discountPercent,
             applyVat);
 
+        ValidateFleetTotalsDoNotOverflow(record);
+
         if (!isHistoricalEntry && odometerAtServiceKm > vehicle.CurrentOdometerKm)
             vehicle.UpdateOdometer(odometerAtServiceKm);
 
@@ -367,6 +369,36 @@ public class MaintenanceService
             today: currentDay);
 
         return true;
+    }
+
+    private void ValidateFleetTotalsDoNotOverflow(ServiceRecord candidate)
+    {
+        try
+        {
+            checked
+            {
+                decimal totalParts = candidate.PartsCost;
+                decimal totalLabor = candidate.LaborCost;
+                decimal totalDiscount = candidate.DiscountAmount;
+                decimal totalVat = candidate.VatAmount;
+                decimal totalSpend = candidate.TotalCost;
+
+                foreach (ServiceRecord existing in _database.ServiceRecords)
+                {
+                    totalParts += existing.PartsCost;
+                    totalLabor += existing.LaborCost;
+                    totalDiscount += existing.DiscountAmount;
+                    totalVat += existing.VatAmount;
+                    totalSpend += existing.TotalCost;
+                }
+            }
+        }
+        catch (OverflowException ex)
+        {
+            throw new OverflowException(
+                "Recording this service would cause fleet cost totals to exceed the maximum supported amount.",
+                ex);
+        }
     }
 
     private int? GetRegistrationOdometerKm(Vehicle vehicle)

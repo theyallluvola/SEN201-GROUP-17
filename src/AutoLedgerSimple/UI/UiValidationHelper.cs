@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using AutoLedgerSimple.Models;
 
 namespace AutoLedgerSimple.UI;
@@ -11,6 +12,8 @@ namespace AutoLedgerSimple.UI;
 public static class UiValidationHelper
 {
     private static readonly string[] DateFormats = { "yyyy-MM-dd", "d/M/yyyy", "d-M-yyyy" };
+    private static readonly Regex ValidIntPattern = new(@"^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)$", RegexOptions.Compiled);
+    private static readonly Regex ValidDecimalPattern = new(@"^[+-]?(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?|\.\d+)$", RegexOptions.Compiled);
 
     public static bool TryParseInt(string? text, out int value)
     {
@@ -18,8 +21,12 @@ public static class UiValidationHelper
         if (string.IsNullOrWhiteSpace(text))
             return false;
 
+        string trimmed = text.Trim();
+        if (!ValidIntPattern.IsMatch(trimmed))
+            return false;
+
         return int.TryParse(
-            text.Trim(),
+            trimmed,
             NumberStyles.Integer | NumberStyles.AllowThousands,
             CultureInfo.InvariantCulture,
             out value);
@@ -32,7 +39,7 @@ public static class UiValidationHelper
             return false;
 
         string cleaned = text.Replace("₦", string.Empty).Trim();
-        if (cleaned.Length == 0)
+        if (cleaned.Length == 0 || !ValidDecimalPattern.IsMatch(cleaned))
             return false;
 
         return decimal.TryParse(

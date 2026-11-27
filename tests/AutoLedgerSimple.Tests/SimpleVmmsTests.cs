@@ -533,4 +533,142 @@ public class SimpleVmmsTests
             Assert.Equal(0, fixture.Store.SaveCount);
         });
     }
+
+    private sealed class FailingSaveFleetStore : IFleetStore
+    {
+        private readonly FleetDatabase _database;
+
+        public FailingSaveFleetStore(FleetDatabase database) => _database = database;
+
+        public string FilePath => "memory://readonly";
+
+        public FleetDatabase Load() => _database;
+
+        public void Save(FleetDatabase database) => throw new IOException("Disk is read-only.");
+    }
+
+    [Fact]
+    public void UiValidationHelper_RejectsMalformedThousandsGrouping()
+    {
+        Assert.False(UiValidationHelper.TryParseDecimal("12,50", out _));
+        Assert.False(UiValidationHelper.TryParseDecimal("1,23.45", out _));
+        Assert.False(UiValidationHelper.TryParseDecimal("12,3456", out _));
+        Assert.False(UiValidationHelper.TryParseInt("12,50", out _));
+        Assert.False(UiValidationHelper.TryParseInt("1,23,456", out _));
+
+        Assert.True(UiValidationHelper.TryParseDecimal("1,234,567.89", out decimal valid));
+        Assert.Equal(1_234_567.89m, valid);
+    }
+
+    [Fact]
+    public void MainForm_SecondInstanceCannotOverwriteSavedWorkFromFirstInstance()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "autoledger-concurrent-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string filePath = Path.Combine(directory, "fleet.json");
+            RunSta(() =>
+            {
+                var store1 = new JsonFleetStore(filePath);
+                FleetDatabase db1 = store1.Load();
+                using var form1 = new MainForm(store1, db1, new VehicleService(db1), new MaintenanceService(db1));
+
+                var store2 = new JsonFleetStore(filePath);
+                FleetDatabase db2 = store2.Load();
+                using var form2 = new MainForm(store2, db2, new VehicleService(db2), new MaintenanceService(db2));
+
+                Find<TextBox>(form1, "txtPlate").Text = "AAA-111-AA";
+                Find<TextBox>(form1, "txtMake").Text = "Toyota";
+                Find<TextBox>(form1, "txtModel").Text = "Corolla";
+                Find<TextBox>(form1, "txtYear").Text = "2021";
+                Find<TextBox>(form1, "txtOdometer").Text = "1000";
+                Find<TextBox>(form1, "txtOwner").Text = "Owner A";
+                Assert.True(form1.TryRegisterVehicle());
+
+                Find<TextBox>(form2, "txtPlate").Text = "BBB-222-BB";
+                Find<TextBox>(form2, "txtMake").Text = "Honda";
+                Find<TextBox>(form2, "txtModel").Text = "Civic";
+                Find<TextBox>(form2, "txtYear").Text = "2022";
+                Find<TextBox>(form2, "txtOdometer").Text = "2000";
+                Find<TextBox>(form2, "txtOwner").Text = "Owner B";
+                Assert.False(form2.TryRegisterVehicle());
+                Assert.Equal("BBB-222-BB", Find<TextBox>(form2, "txtPlate").Text);
+                Assert.Empty(db2.Vehicles);
+
+                FleetDatabase reopened = new JsonFleetStore(filePath).Load();
+                Vehicle saved = Assert.Single(reopened.Vehicles);
+                Assert.Equal("AAA-111-AA", saved.PlateNumber);
+            });
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void MainForm_ServiceThatOverflowsFleetTotalsIsRejectedAndAppStaysReopenable()
+    {
+        RunSta(() =>
+        {
+            var fixture = new Fixture(seedSampleData: true);
+            using MainForm form = fixture.CreateForm();
+
+            Find<ComboBox>(form, "cboServiceVehicle").SelectedIndex = 0;
+            Find<TextBox>(form, "txtServiceOdometer").Text = "89,000";
+            Find<TextBox>(form, "txtDescription").Text = "Max parts overflow";
+            Find<TextBox>(form, "txtParts").Text = decimal.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Find<TextBox>(form, "txtLabor").Text = "0";
+            Find<TextBox>(form, "txtDiscount").Text = "0";
+            Find<CheckBox>(form, "chkVat").Checked = false;
+
+            Assert.False(form.TryRecordService());
+            Assert.Contains("too large", form.StatusMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("Max parts overflow", Find<TextBox>(form, "txtDescription").Text);
+            Assert.Equal(3, fixture.Database.ServiceRecords.Count);
+            Assert.Equal(0, fixture.Store.SaveCount);
+
+            using MainForm reopened = fixture.CreateForm();
+            Assert.Equal("3", Find<Label>(reopened, "kpiServices").Text);
+        });
+    }
+
+    [Fact]
+    public void MainForm_FailedSaveRollsBackAndPreservesUserInputForRegisterAndService()
+    {
+        RunSta(() =>
+        {
+            var db = new FleetDatabase();
+            var vehicles = new VehicleService(db);
+            var maintenance = new MaintenanceService(db);
+            maintenance.SeedSampleDataIfEmpty(Today);
+            var failingStore = new FailingSaveFleetStore(db);
+
+            using var form = new MainForm(failingStore, db, vehicles, maintenance);
+
+            Find<TextBox>(form, "txtPlate").Text = "FAIL-999-ZZ";
+            Find<TextBox>(form, "txtMake").Text = "Ford";
+            Find<TextBox>(form, "txtModel").Text = "Focus";
+            Find<TextBox>(form, "txtYear").Text = "2020";
+            Find<TextBox>(form, "txtOdometer").Text = "5000";
+            Find<TextBox>(form, "txtOwner").Text = "Fleet";
+
+            Assert.False(form.TryRegisterVehicle());
+            Assert.Equal("FAIL-999-ZZ", Find<TextBox>(form, "txtPlate").Text);
+            Assert.Equal(3, db.Vehicles.Count);
+            Assert.Equal(3, Find<DataGridView>(form, "gridVehicles").Rows.Count);
+
+            Find<ComboBox>(form, "cboServiceVehicle").SelectedIndex = 0;
+            Find<TextBox>(form, "txtServiceOdometer").Text = "89,500";
+            Find<TextBox>(form, "txtDescription").Text = "Unsaved brake job";
+            Find<TextBox>(form, "txtParts").Text = "10000";
+            Find<TextBox>(form, "txtLabor").Text = "5000";
+
+            Assert.False(form.TryRecordService());
+            Assert.Equal("Unsaved brake job", Find<TextBox>(form, "txtDescription").Text);
+            Assert.Equal(3, db.ServiceRecords.Count);
+            Assert.Equal(88_500, vehicles.FindByPlate("EKY-714-XT")!.CurrentOdometerKm);
+        });
+    }
 }

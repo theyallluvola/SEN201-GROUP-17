@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using AutoLedgerSimple.Data;
 using AutoLedgerSimple.Services;
@@ -16,6 +18,18 @@ namespace AutoLedgerSimple
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "AutoLedgerSimple",
                 "fleet.json");
+
+            string mutexName = BuildInstanceMutexName(dataPath);
+            using var instanceMutex = new Mutex(initiallyOwned: true, name: mutexName, out bool createdNew);
+            if (!createdNew)
+            {
+                MessageBox.Show(
+                    "AutoLedger is already running for this fleet file. Close the existing window before opening another instance.",
+                    "AutoLedger",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
 
             IFleetStore store = new JsonFleetStore(dataPath);
 
@@ -50,6 +64,13 @@ namespace AutoLedgerSimple
             }
 
             Application.Run(new MainForm(store, database, vehicleService, maintenanceService));
+        }
+
+        private static string BuildInstanceMutexName(string filePath)
+        {
+            string normalized = Path.GetFullPath(filePath).ToUpperInvariant();
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(normalized));
+            return "Local\\AutoLedgerSimple_" + Convert.ToHexString(hash);
         }
     }
 }

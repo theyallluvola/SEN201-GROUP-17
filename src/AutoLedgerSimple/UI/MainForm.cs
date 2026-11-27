@@ -160,6 +160,7 @@ public sealed class MainForm : Form
             && !UiValidationHelper.TryParseDateOnly(_registeredOn.Text, out registeredOn))
             return Fail("Registered date must look like 2026-11-26 or 26/11/2026.");
 
+        string snapshot = JsonFleetStore.SerializeSnapshot(_database);
         Vehicle vehicle;
         try
         {
@@ -171,7 +172,12 @@ public sealed class MainForm : Form
             return Fail(CleanMessage(ex.Message));
         }
 
-        bool saved = TrySave();
+        if (!TrySave())
+        {
+            JsonFleetStore.RestoreSnapshot(_database, snapshot);
+            RefreshAll();
+            return false;
+        }
 
         _plate.Clear();
         _make.Clear();
@@ -182,8 +188,7 @@ public sealed class MainForm : Form
         _registeredOn.Clear();
 
         RefreshAll();
-        if (saved)
-            SetStatus($"Registered {vehicle.GetDisplayName()}.", isError: false);
+        SetStatus($"Registered {vehicle.GetDisplayName()}.", isError: false);
 
         return true;
     }
@@ -214,6 +219,7 @@ public sealed class MainForm : Form
         if (!TryReadAmount(_discount, out decimal discount) || discount < 0m || discount > 100m)
             return Fail("Discount must be a number between 0 and 100.");
 
+        string snapshot = JsonFleetStore.SerializeSnapshot(_database);
         ServiceRecord record;
         try
         {
@@ -237,7 +243,12 @@ public sealed class MainForm : Form
             return Fail(CleanMessage(ex.Message));
         }
 
-        bool saved = TrySave();
+        if (!TrySave())
+        {
+            JsonFleetStore.RestoreSnapshot(_database, snapshot);
+            RefreshAll();
+            return false;
+        }
 
         _description.Clear();
         _parts.Clear();
@@ -248,8 +259,7 @@ public sealed class MainForm : Form
         PrefillOdometer();
         UpdatePreview();
 
-        if (saved)
-            SetStatus($"Service recorded for {vehicle.Label}. Total {UiValidationHelper.FormatNaira(record.TotalCost)}.", isError: false);
+        SetStatus($"Service recorded for {vehicle.Label}. Total {UiValidationHelper.FormatNaira(record.TotalCost)}.", isError: false);
 
         return true;
     }
@@ -462,7 +472,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            SetStatus($"Changes were applied but could not be saved to disk: {ex.Message}", isError: true);
+            SetStatus($"Could not save changes to disk: {ex.Message}", isError: true);
             return false;
         }
     }
